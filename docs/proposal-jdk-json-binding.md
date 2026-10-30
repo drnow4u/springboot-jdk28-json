@@ -19,14 +19,30 @@ This proposal asks how that mapping should be implemented, in particular **runti
 
 ## What the JDK provides and what is missing
 
-| Concern                                                             | JDK 28 `jdk.incubator.json`                                                                        | Needed from Spring or a library |
-|---------------------------------------------------------------------|----------------------------------------------------------------------------------------------------|---------------------------------|
-| Parse text into a tree                                              | `Json.parse`                                                                                       | —                               |
-| Write a tree back to text                                           | `JsonValue.toString`                                                                               | —                               |
-| Build trees                                                         | `JsonObject.of`, `JsonArray.of`, `JsonString.of`, `JsonNumber.of`, `JsonBoolean.of`, `JsonNull.of` | —                               |
-| Map JSON to and from Java types (records, lists, enums, dates)      | —                                                                                                  | ✔                              |
-| `HttpMessageConverter` for Spring MVC, `RestClient`, `RestTemplate` | —                                                                                                  | ✔                              |
-| Error mapping (malformed JSON or wrong type → `400 Bad Request`)    | throws `JsonParseException` and runtime exceptions                                                 | ✔                              |
+| Concern                                                                            | JDK 28 `jdk.incubator.json`                                                                        | Needed from Spring or a library |
+|------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------|---------------------------------|
+| Parse text into a tree                                                             | `Json.parse`                                                                                       | —                               |
+| Write a tree back to text                                                          | `JsonValue.toString`                                                                               | —                               |
+| Build trees                                                                        | `JsonObject.of`, `JsonArray.of`, `JsonString.of`, `JsonNumber.of`, `JsonBoolean.of`, `JsonNull.of` | —                               |
+| Map JSON to and from Java types (records, lists, enums, dates)                     | —                                                                                                  | ✔                              |
+| `HttpMessageConverter` for Spring MVC, `RestClient`, `RestTemplate`                | —                                                                                                  | ✔                              |
+| `MessageConverter` for `spring-messaging` (`@KafkaListener`, JMS, RabbitMQ, STOMP) | —                                                                                                  | ✔                              |
+| Kafka `Serializer` / `Deserializer` (Spring for Apache Kafka)                      | —                                                                                                  | ✔                              |
+| Error mapping (malformed JSON or wrong type → `400 Bad Request`)                   | throws `JsonParseException` and runtime exceptions                                                 | ✔                              |
+
+## Beyond HTTP: Kafka and messaging
+
+The binding should not be tied to HTTP. The JSON ↔ record mapping should be a core component without Spring web dependencies, with thin adapters for each integration point:
+
+| Adapter                                                                | Interface                                                           | Project                               |
+|------------------------------------------------------------------------|---------------------------------------------------------------------|---------------------------------------|
+| HTTP                                                                   | `HttpMessageConverter`                                              | Spring Framework (`spring-web`)       |
+| Messaging (`@KafkaListener`, `@JmsListener`, `@RabbitListener`, STOMP) | `MessageConverter`                                                  | Spring Framework (`spring-messaging`) |
+| Kafka producer and consumer                                            | `org.apache.kafka.common.serialization.Serializer` / `Deserializer` | Spring for Apache Kafka               |
+
+Kafka adds two concerns:
+- **Type from headers.** Spring Kafka's Jackson `JsonDeserializer` can choose the target class from a `__TypeId__` record header, restricted by a trusted-packages list. The rule "never let the input choose the type" applies to headers as well: the target type should come from configuration or the listener method signature.
+- **Size limits.** Kafka limits message size on the broker (`message.max.bytes`), but consumers still parse whatever arrives, so the same body-size and error-message limits apply.
 
 ## Options
 
@@ -100,7 +116,7 @@ Design principles proposed for the binding:
 4. **Type coverage.** Which types are required for a first version: lists, maps, enums, `Optional`, `java.time`, `BigDecimal`?
 5. **Customisation.** Is an annotation for renaming fields (like Jackson's `@JsonProperty`) needed, or a naming strategy (`snake_case`)?
 6. **Unknown and missing fields.** Ignore unknown fields (as Spring Boot's Jackson default does) or reject them? `null` for missing fields?
-7. **Integration points.** Besides MVC: `RestClient`/`RestTemplate`, WebFlux codecs, Spring Boot's `JsonParser`, test support (`@JsonTest`).
+7. **Integration points.** Besides MVC: `RestClient`/`RestTemplate`, WebFlux codecs, `spring-messaging` `MessageConverter`, Kafka `Serializer`/`Deserializer` in Spring for Apache Kafka, Spring Boot's `JsonParser`, test support (`@JsonTest`).
 8. **Default limits.** Which defaults for body size, and should there also be limits on nesting depth, string length and number of fields, given that the JDK parser has none?
 9. **Polymorphism.** Should polymorphic types (sealed interfaces) be supported at all, and if so only through an explicit, closed list of subtypes?
 10. **Native image.** Is relying on Spring AOT hints acceptable for option A, or should native-image support require option B?
